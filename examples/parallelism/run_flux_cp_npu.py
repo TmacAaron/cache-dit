@@ -35,6 +35,7 @@ args = get_args()
 print(args)
 
 rank, device = maybe_init_distributed(args)
+world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
 
 pipe: FluxPipeline = FluxPipeline.from_pretrained(
     os.environ.get(
@@ -47,9 +48,46 @@ pipe: FluxPipeline = FluxPipeline.from_pretrained(
 if args.cache or args.parallel_type is not None:
     cachify(args, pipe)
 
+if args.vae_dp:
+    HW_SPLITS = {
+        1: (1, 1),
+        2: (1, 2),
+        4: (2, 2),
+        8: (2, 4),
+    }
+    pipe.vae.enable_dp(world_size=world_size, hw_splits=HW_SPLITS[world_size]) # , overlap_ratio=0.01, overlap_pixels=64)
+
 assert isinstance(pipe.transformer, FluxTransformer2DModel)
 
 pipe.set_progress_bar_config(disable=rank != 0)
+
+def init_profiler():
+    experimental_config = torch_npu.profiler._ExperimentalConfig(
+    	export_type=torch_npu.profiler.ExportType.Text,
+    	profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
+    	msprof_tx=False,
+    	aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,
+    	l2_cache=False,
+    	op_attr=False,
+    	data_simplification=False,
+    	record_op_args=False,
+    	gc_detect_threshold=None
+    )
+
+    prof = torch_npu.profiler.profile(
+    	activities=[
+    		torch_npu.profiler.ProfilerActivity.CPU,
+    		torch_npu.profiler.ProfilerActivity.NPU
+    		],
+    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0),
+    	on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result"),
+    	record_shapes=True,
+    	profile_memory=False,
+    	with_stack=False,
+    	with_modules=False,
+    	with_flops=False,
+    	experimental_config=experimental_config)
+    return prof
 
 
 def run_pipe(pipe: FluxPipeline):
@@ -67,11 +105,21 @@ if args.compile:
     cache_dit.set_compile_configs()
     pipe.transformer = torch.compile(pipe.transformer)
 
+prof = None
+
 # warmup
 _ = run_pipe(pipe)
 
 start = time.time()
+if prof:
+    prof = init_profiler()
+    prof.start()
+
 image = run_pipe(pipe)
+
+if prof:
+    prof.step()
+    prof.stop()
 end = time.time()
 
 if rank == 0:

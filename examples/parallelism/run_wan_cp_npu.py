@@ -8,6 +8,7 @@ import time
 import torch
 import torch_npu
 from torch_npu.contrib import transfer_to_npu
+import torch.distributed as dist
 
 from diffusers import WanPipeline, WanTransformer3DModel
 from diffusers.utils import export_to_video
@@ -54,6 +55,7 @@ def main():
     print(args)
 
     rank, device = maybe_init_distributed(args)
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
 
     model_id = os.environ.get(
         "WAN_2_2_DIR",
@@ -75,7 +77,13 @@ def main():
         pipe.to(device)
 
     if args.vae_dp:
-        pipe.vae.enable_dp(world_size=8, hw_splits=(2, 4)) # , overlap_ratio=0.01, overlap_pixels=64)
+        HW_SPLITS = {
+            1: (1, 1),
+            2: (1, 2),
+            4: (2, 2),
+            8: (2, 4),
+        }
+        pipe.vae.enable_dp(world_size=world_size, hw_splits=HW_SPLITS[world_size]) # , overlap_ratio=0.01, overlap_pixels=64)
 
     if args.vae_tiling:
         pipe.vae.enable_tiling(
