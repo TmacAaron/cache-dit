@@ -134,10 +134,15 @@ def main():
     prof = True
     if prof:
         prof = init_profiler()
+        prof.start()
 
     start = time.time()
-    video = run_pipe(args, pipe, prof)
+    video = run_pipe(args, pipe)
     end = time.time()
+
+    if prof:
+        prof.step()
+        prof.stop()
 
     if rank == 0:
         cache_dit.summary(pipe)
