@@ -24,7 +24,36 @@ import cache_dit
 from cache_dit.npu_optim import npu_optimize
 
 
-def run_pipe(args, pipe, warmup: bool = False):
+def init_profiler():
+    experimental_config = torch_npu.profiler._ExperimentalConfig(
+    	export_type=torch_npu.profiler.ExportType.Text,
+    	profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
+    	msprof_tx=False,
+    	aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,
+    	l2_cache=False,
+    	op_attr=False,
+    	data_simplification=False,
+    	record_op_args=False,
+    	gc_detect_threshold=None
+    )
+
+    prof = torch_npu.profiler.profile(
+    	activities=[
+    		torch_npu.profiler.ProfilerActivity.CPU,
+    		torch_npu.profiler.ProfilerActivity.NPU
+    		],
+    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0),
+    	on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result"),
+    	record_shapes=True,
+    	profile_memory=False,
+    	with_stack=False,
+    	with_modules=False,
+    	with_flops=False,
+    	experimental_config=experimental_config)
+    return prof
+
+
+def run_pipe(args, pipe, warmup: bool = False, prof=None):
     prompt = "A cat walks on the grass, realistic"
     negative_prompt = "Bright tones, overexposed, static, blurred details, "
     "subtitles, style, works, paintings, images, static, overall gray, "
@@ -46,6 +75,7 @@ def run_pipe(args, pipe, warmup: bool = False):
         guidance_scale=5.0,
         generator=generator,
         num_inference_steps=num_inference_steps,
+        prof=prof,
     ).frames[0]
     return output
 
@@ -99,9 +129,14 @@ def main():
 
     # warmup
     _ = run_pipe(args, pipe, warmup=True)
+    
+    prof = None
+    prof = True
+    if prof:
+        prof = init_profiler()
 
     start = time.time()
-    video = run_pipe(args, pipe)
+    video = run_pipe(args, pipe, prof)
     end = time.time()
 
     if rank == 0:
