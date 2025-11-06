@@ -64,7 +64,7 @@ assert isinstance(pipe.transformer, FluxTransformer2DModel)
 
 pipe.set_progress_bar_config(disable=rank != 0)
 
-def init_profiler():
+def init_profiler(steps):
     experimental_config = torch_npu.profiler._ExperimentalConfig(
     	export_type=torch_npu.profiler.ExportType.Text,
     	profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
@@ -82,7 +82,7 @@ def init_profiler():
     		torch_npu.profiler.ProfilerActivity.CPU,
     		torch_npu.profiler.ProfilerActivity.NPU
     		],
-    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0),
+    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=steps, repeat=1, skip_first=0),
     	on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result"),
     	record_shapes=True,
     	profile_memory=False,
@@ -93,13 +93,14 @@ def init_profiler():
     return prof
 
 
-def run_pipe(pipe: FluxPipeline):
+def run_pipe(pipe: FluxPipeline, prof=None):
     image = pipe(
         "A cat holding a sign that says hello world",
         height=1024 if args.height is None else args.height,
         width=1024 if args.width is None else args.width,
         num_inference_steps=28 if args.steps is None else args.steps,
         generator=torch.Generator("cpu").manual_seed(0),
+        prof=prof,
     ).images[0]
     return image
 
@@ -108,21 +109,19 @@ if args.compile:
     cache_dit.set_compile_configs()
     pipe.transformer = torch.compile(pipe.transformer)
 
-prof = None
 
 # warmup
 _ = run_pipe(pipe)
 
+prof = None
+# prof = True
+if prof:
+    prof = init_profiler(steps=args.steps+2)
+
 start = time.time()
-if prof:
-    prof = init_profiler()
-    prof.start()
 
-image = run_pipe(pipe)
+image = run_pipe(pipe, prof)
 
-if prof:
-    prof.step()
-    prof.stop()
 end = time.time()
 
 if rank == 0:
