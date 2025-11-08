@@ -24,7 +24,7 @@ import cache_dit
 from cache_dit.npu_optim import npu_optimize
 
 
-def init_profiler():
+def init_profiler(step=1):
     experimental_config = torch_npu.profiler._ExperimentalConfig(
     	export_type=torch_npu.profiler.ExportType.Text,
     	profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
@@ -42,7 +42,7 @@ def init_profiler():
     		torch_npu.profiler.ProfilerActivity.CPU,
     		torch_npu.profiler.ProfilerActivity.NPU
     		],
-    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0),
+    	schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=step, repeat=1, skip_first=0),
     	on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result"),
     	record_shapes=True,
     	profile_memory=False,
@@ -55,12 +55,13 @@ def init_profiler():
 
 def run_pipe(args, pipe, warmup: bool = False, prof=None):
     prompt = "A cat walks on the grass, realistic"
-    negative_prompt = "Bright tones, overexposed, static, blurred details, "
-    "subtitles, style, works, paintings, images, static, overall gray, "
-    "worst quality, low quality, JPEG compression residue, ugly, incomplete, "
-    "extra fingers, poorly drawn hands, poorly drawn faces, deformed, "
-    "disfigured, misshapen limbs, fused fingers, still picture, messy "
-    "background, three legs, many people in the background, walking backwards"
+    negative_prompt = \
+        "Bright tones, overexposed, static, blurred details, " \
+        "subtitles, style, works, paintings, images, static, overall gray, " \
+        "worst quality, low quality, JPEG compression residue, ugly, incomplete, " \
+        "extra fingers, poorly drawn hands, poorly drawn faces, deformed, " \
+        "disfigured, misshapen limbs, fused fingers, still picture, messy " \
+        "background, three legs, many people in the background, walking backwards"
 
     seed = 1234
     generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -131,18 +132,13 @@ def main():
     _ = run_pipe(args, pipe, warmup=True)
     
     prof = None
-    prof = True
+    # prof = True
     if prof:
-        prof = init_profiler()
-        prof.start()
+        prof = init_profiler(args.steps + 2)
 
     start = time.time()
-    video = run_pipe(args, pipe)
+    video = run_pipe(args, pipe, prof=prof)
     end = time.time()
-
-    if prof:
-        prof.step()
-        prof.stop()
 
     if rank == 0:
         cache_dit.summary(pipe)
